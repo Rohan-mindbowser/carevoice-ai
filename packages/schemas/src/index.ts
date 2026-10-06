@@ -71,3 +71,25 @@ export const DiagnosticReportSummarySchema = z.object({
   conclusion: z.string().optional(),
 });
 export type DiagnosticReportSummary = z.infer<typeof DiagnosticReportSummarySchema>;
+
+// ── AI intent detection ──────────────────────────────────────────────────────
+// Structured output the LLM must produce for a user turn (spec §13). Validated with Zod; the
+// orchestrator maps the intent to an MCP tool deterministically (it never lets the LLM name tools).
+
+export const IntentSchema = z.object({
+  intent: z.enum([
+    'patient_lookup',
+    'latest_labs',
+    'observations',
+    'diagnostic_reports',
+    'clinical_question',
+    'unknown',
+  ]),
+  /** Only set when the user explicitly provides a patient id. Never invented. */
+  patientId: z.string().optional(),
+  /** General knowledge question text, for clinical_question. */
+  query: z.string().optional(),
+  /** Optional result count the user asked for (e.g. "last 3 labs"). */
+  limit: z.number().int().optional(),
+});
+export type Intent = z.infer<typeof IntentSchema>;

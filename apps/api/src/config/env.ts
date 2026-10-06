@@ -1,8 +1,30 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 
-// Load .env (if present) before reading process.env. Missing file is fine — defaults apply.
-loadDotenv();
+/**
+ * Load .env before reading process.env. Monorepo-friendly: load the local .env, then the nearest
+ * .env walking up to the repo root. dotenv doesn't override already-set vars, so local values win
+ * and the root fills gaps. This lets a single root .env serve every workspace package (each runs
+ * with its own cwd under pnpm). Missing files are fine — defaults apply.
+ */
+function loadEnvFiles(): void {
+  loadDotenv();
+  let dir = process.cwd();
+  for (let depth = 0; depth < 6; depth++) {
+    const candidate = join(dir, '.env');
+    if (existsSync(candidate)) {
+      loadDotenv({ path: candidate });
+      return;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return;
+    dir = parent;
+  }
+}
+
+loadEnvFiles();
 
 /** Cerner's public, unauthenticated R4 sandbox tenant — works with zero credentials. */
 export const CERNER_OPEN_SANDBOX_URL =
@@ -32,6 +54,7 @@ const EnvSchema = z.object({
   FHIR_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
   GOOGLE_GENAI_API_KEY: optionalString(),
+  GEMINI_MODEL: z.string().default('gemini-3.8-flash'),
 
   PINECONE_API_KEY: optionalString(),
   PINECONE_INDEX: optionalString(),

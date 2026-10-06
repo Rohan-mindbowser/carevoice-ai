@@ -11,11 +11,13 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "fhir:smoke": "tsx src/fhir/smoke.ts",
-    "mcp:smoke": "tsx src/mcp/smoke.ts"
+    "mcp:smoke": "tsx src/mcp/smoke.ts",
+    "ai:smoke": "tsx src/ai/smoke.ts"
   },
   "dependencies": {
     "@carevoice/schemas": "workspace:*",
     "@carevoice/shared": "workspace:*",
+    "@google/genai": "^2.27.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
