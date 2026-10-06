@@ -5,10 +5,11 @@ import type { FHIRClient } from '../fhir/fhir-client.js';
 import type { ToolRegistry } from '../mcp/registry.js';
 import type { ToolError } from '../mcp/tool.js';
 import type { AuthContext } from '../security/authorization.js';
+import type { ChatStreamEvent } from '@carevoice/schemas';
 import { runTool } from '../mcp/executor.js';
 import { detectIntent } from './intent.js';
 import { selectTool } from './tool-selection.js';
-import { generateClinicalResponse } from './response.js';
+import { buildClinicalPrompt, generateClinicalResponse, type ClinicalResponseInput } from './response.js';
 import { logger } from '../observability/logger.js';
 
 /** Minimal retrieval surface the orchestrator needs — RagService satisfies it structurally. */
@@ -29,6 +30,8 @@ export interface OrchestratorInput {
   conversationId?: string;
   auth: AuthContext;
   requestId: string;
+  /** Aborts streaming generation when the client disconnects. */
+  signal?: AbortSignal;
 }
 
 export interface OrchestratorResult {
@@ -80,41 +83,103 @@ function formatKnowledge(results: RagSearchResult[]): string {
 const KNOWLEDGE_MIN_SCORE = 0.4;
 const KNOWLEDGE_TOP_K = 5;
 
+/** How the reply is produced: a fixed deterministic message, or LLM generation from context. */
+type Generation =
+  | { kind: 'static'; text: string }
+  | { kind: 'llm'; input: ClinicalResponseInput };
+
+interface Resolution {
+  partial: Omit<OrchestratorResult, 'reply'>;
+  generation: Generation;
+}
+
+const noop = (): void => {};
+
 /**
  * The turn lifecycle (spec §14): detect intent → route → (MCP/FHIR or RAG) → assemble context →
- * generate. Express-free and dependency-injected, so it is unit-testable in isolation. Keeps patient
- * data (authoritative) and knowledge (reference) strictly separated when building LLM context.
+ * generate. Express-free and dependency-injected, so it is unit-testable in isolation. Patient data
+ * (authoritative) and knowledge (reference) are kept strictly separate when building LLM context.
+ *
+ * {@link resolve} contains the single copy of the routing logic and emits streaming events as it
+ * goes; {@link handleTurn} (non-streaming) and {@link streamTurn} (SSE) both build on it.
  */
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {}
 
+  /** Non-streaming turn — returns the full result once the reply is generated. */
   async handleTurn(input: OrchestratorInput): Promise<OrchestratorResult> {
+    const { partial, generation } = await this.resolve(input, noop);
+    const reply =
+      generation.kind === 'static'
+        ? generation.text
+        : await generateClinicalResponse(this.deps.llm, generation.input);
+    return { ...partial, reply };
+  }
+
+  /** Streaming turn — emits structured events then streams the reply tokens (spec §9). */
+  async streamTurn(input: OrchestratorInput, emit: (event: ChatStreamEvent) => void): Promise<void> {
+    const { partial, generation } = await this.resolve(input, emit);
+
+    if (generation.kind === 'static') {
+      emit({ type: 'token', text: generation.text });
+    } else {
+      const { system, prompt } = buildClinicalPrompt(generation.input);
+      for await (const delta of this.deps.llm.generateTextStream({ system, prompt, signal: input.signal })) {
+        if (input.signal?.aborted) break;
+        emit({ type: 'token', text: delta });
+      }
+    }
+    emit({ type: 'done', conversationId: partial.conversationId });
+  }
+
+  /** Shared routing. Emits intent/tool/data/citation events; returns the resolved generation plan. */
+  private async resolve(
+    input: OrchestratorInput,
+    emit: (event: ChatStreamEvent) => void,
+  ): Promise<Resolution> {
     const conversationId = input.conversationId ?? randomUUID();
     const intent = await detectIntent(this.deps.llm, input.message);
     logger.info(
       { event: 'turn', requestId: input.requestId, conversationId, intent: intent.intent },
       'orchestrator.turn',
     );
+    emit({ type: 'intent', intent });
 
     if (intent.intent === 'unknown') {
-      return { conversationId, intent, reply: CLARIFY_MESSAGE };
+      return { partial: { conversationId, intent }, generation: { kind: 'static', text: CLARIFY_MESSAGE } };
     }
-    if (intent.intent === 'clinical_question') {
-      return this.handleKnowledge(input, intent, conversationId);
-    }
-    return this.handlePatientData(input, intent, conversationId);
-  }
 
-  private async handlePatientData(
-    input: OrchestratorInput,
-    intent: Intent,
-    conversationId: string,
-  ): Promise<OrchestratorResult> {
+    if (intent.intent === 'clinical_question') {
+      if (!this.deps.rag) {
+        return {
+          partial: { conversationId, intent },
+          generation: { kind: 'static', text: KNOWLEDGE_UNAVAILABLE_MESSAGE },
+        };
+      }
+      emit({ type: 'tool', name: 'knowledge_search', status: 'running' });
+      const citations = await this.deps.rag.search(intent.query ?? input.message, {
+        topK: KNOWLEDGE_TOP_K,
+        minScore: KNOWLEDGE_MIN_SCORE,
+      });
+      emit({ type: 'tool', name: 'knowledge_search', status: 'ok' });
+      if (citations.length > 0) emit({ type: 'citations', citations });
+      const knowledge = citations.length > 0 ? formatKnowledge(citations) : undefined;
+      return {
+        partial: { conversationId, intent, citations },
+        generation: { kind: 'llm', input: { userMessage: input.message, knowledge } },
+      };
+    }
+
+    // Patient-data path.
     const plan = selectTool(intent);
     if (!plan) {
-      return { conversationId, intent, reply: NEEDS_PATIENT_ID_MESSAGE };
+      return {
+        partial: { conversationId, intent },
+        generation: { kind: 'static', text: NEEDS_PATIENT_ID_MESSAGE },
+      };
     }
 
+    emit({ type: 'tool', name: plan.toolName, status: 'running' });
     const result = await runTool(this.deps.registry, plan.toolName, plan.input, {
       auth: input.auth,
       requestId: input.requestId,
@@ -122,48 +187,18 @@ export class Orchestrator {
     });
 
     if (!result.ok) {
-      // Deterministic, safe message — no LLM call, no fabrication.
+      emit({ type: 'tool', name: plan.toolName, status: 'error' });
       return {
-        conversationId,
-        intent,
-        toolUsed: { name: plan.toolName, ok: false },
-        reply: toolErrorMessage(result.error),
+        partial: { conversationId, intent, toolUsed: { name: plan.toolName, ok: false } },
+        generation: { kind: 'static', text: toolErrorMessage(result.error) },
       };
     }
 
-    const reply = await generateClinicalResponse(this.deps.llm, {
-      userMessage: input.message,
-      patientData: result.data,
-    });
+    emit({ type: 'tool', name: plan.toolName, status: 'ok' });
+    emit({ type: 'patient_data', data: result.data });
     return {
-      conversationId,
-      intent,
-      toolUsed: { name: plan.toolName, ok: true },
-      patientData: result.data,
-      reply,
+      partial: { conversationId, intent, toolUsed: { name: plan.toolName, ok: true }, patientData: result.data },
+      generation: { kind: 'llm', input: { userMessage: input.message, patientData: result.data } },
     };
-  }
-
-  private async handleKnowledge(
-    input: OrchestratorInput,
-    intent: Intent,
-    conversationId: string,
-  ): Promise<OrchestratorResult> {
-    if (!this.deps.rag) {
-      return { conversationId, intent, reply: KNOWLEDGE_UNAVAILABLE_MESSAGE };
-    }
-
-    const query = intent.query ?? input.message;
-    const citations = await this.deps.rag.search(query, {
-      topK: KNOWLEDGE_TOP_K,
-      minScore: KNOWLEDGE_MIN_SCORE,
-    });
-    const knowledge = citations.length > 0 ? formatKnowledge(citations) : undefined;
-
-    const reply = await generateClinicalResponse(this.deps.llm, {
-      userMessage: input.message,
-      knowledge,
-    });
-    return { conversationId, intent, reply, citations };
   }
 }

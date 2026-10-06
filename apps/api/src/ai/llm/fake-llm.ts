@@ -32,4 +32,13 @@ export class FakeLlmClient implements LlmClient {
     this.lastText = args;
     return this.responses.text ?? 'Fake clinical response.';
   }
+
+  async *generateTextStream(args: GenerateTextArgs): AsyncGenerator<string> {
+    this.lastText = args;
+    const text = this.responses.text ?? 'Fake clinical response.';
+    // Emit in two chunks to exercise the streaming path.
+    const mid = Math.ceil(text.length / 2);
+    yield text.slice(0, mid);
+    yield text.slice(mid);
+  }
 }

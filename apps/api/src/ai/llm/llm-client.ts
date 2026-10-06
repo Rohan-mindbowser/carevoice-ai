@@ -13,6 +13,8 @@ export interface GenerateTextArgs {
   prompt: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /** Abort in-flight generation (e.g. when a streaming client disconnects). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -23,4 +25,6 @@ export interface GenerateTextArgs {
 export interface LlmClient {
   generateStructured<T>(args: GenerateStructuredArgs<T>): Promise<T>;
   generateText(args: GenerateTextArgs): Promise<string>;
+  /** Stream the response as text deltas for low time-to-first-token (spec §23). */
+  generateTextStream(args: GenerateTextArgs): AsyncIterable<string>;
 }

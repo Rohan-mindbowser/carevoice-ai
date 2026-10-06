@@ -14,10 +14,8 @@ export interface ClinicalResponseInput {
  * authoritative PATIENT DATA from general KNOWLEDGE, and the system prompt forbids fabrication, so
  * the LLM can only summarize what it was given (spec §6/§15/§39).
  */
-export async function generateClinicalResponse(
-  llm: LlmClient,
-  input: ClinicalResponseInput,
-): Promise<string> {
+/** Build the system+prompt pair for a clinical answer. Shared by the streaming and non-streaming paths. */
+export function buildClinicalPrompt(input: ClinicalResponseInput): { system: string; prompt: string } {
   const sections: string[] = [];
 
   if (input.patientData !== undefined) {
@@ -33,5 +31,13 @@ export async function generateClinicalResponse(
   }
 
   const prompt = `${sections.join('\n\n')}\n\nClinician request: ${input.userMessage}`;
-  return llm.generateText({ system: CLINICAL_RESPONSE_PROMPT.system, prompt });
+  return { system: CLINICAL_RESPONSE_PROMPT.system, prompt };
+}
+
+export async function generateClinicalResponse(
+  llm: LlmClient,
+  input: ClinicalResponseInput,
+): Promise<string> {
+  const { system, prompt } = buildClinicalPrompt(input);
+  return llm.generateText({ system, prompt });
 }

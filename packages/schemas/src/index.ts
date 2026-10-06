@@ -153,3 +153,18 @@ export const ChatResponseSchema = z.object({
   citations: z.array(RagSearchResultSchema).optional(),
 });
 export type ChatResponse = z.infer<typeof ChatResponseSchema>;
+
+// ── Streaming (SSE) events ───────────────────────────────────────────────────
+// Typed event protocol for POST /chat/stream, shared with the web client (spec §9/§11).
+// Order per turn: intent → (tool status, patient_data|citations) → token* → done (or error).
+
+export const ChatStreamEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('intent'), intent: IntentSchema }),
+  z.object({ type: z.literal('tool'), name: z.string(), status: z.enum(['running', 'ok', 'error']) }),
+  z.object({ type: z.literal('patient_data'), data: z.unknown() }),
+  z.object({ type: z.literal('citations'), citations: z.array(RagSearchResultSchema) }),
+  z.object({ type: z.literal('token'), text: z.string() }),
+  z.object({ type: z.literal('done'), conversationId: z.string() }),
+  z.object({ type: z.literal('error'), message: z.string() }),
+]);
+export type ChatStreamEvent = z.infer<typeof ChatStreamEventSchema>;

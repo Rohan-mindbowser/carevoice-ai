@@ -120,6 +120,7 @@ export class GeminiClient implements LlmClient {
           systemInstruction: args.system,
           temperature: args.temperature ?? 0.2,
           maxOutputTokens: args.maxOutputTokens,
+          abortSignal: args.signal,
         },
       }),
     );
@@ -128,5 +129,25 @@ export class GeminiClient implements LlmClient {
       throw new LlmError('Empty LLM response');
     }
     return text;
+  }
+
+  async *generateTextStream(args: GenerateTextArgs): AsyncGenerator<string> {
+    // Retry only covers obtaining the stream; mid-stream errors propagate to the caller.
+    const stream = await withApiRetry(() =>
+      this.ai.models.generateContentStream({
+        model: this.config.model,
+        contents: args.prompt,
+        config: {
+          systemInstruction: args.system,
+          temperature: args.temperature ?? 0.2,
+          maxOutputTokens: args.maxOutputTokens,
+          abortSignal: args.signal,
+        },
+      }),
+    );
+    for await (const chunk of stream) {
+      const text = chunk.text;
+      if (text) yield text;
+    }
   }
 }
