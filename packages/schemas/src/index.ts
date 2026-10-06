@@ -26,11 +26,7 @@ export const ChatRequestSchema = z.object({
 });
 export type ChatRequest = z.infer<typeof ChatRequestSchema>;
 
-export const ChatResponseSchema = z.object({
-  conversationId: z.string(),
-  reply: z.string(),
-});
-export type ChatResponse = z.infer<typeof ChatResponseSchema>;
+// ChatResponseSchema is defined near the end of this file, after Intent and RAG schemas it depends on.
 
 // ── Normalized FHIR domain models ────────────────────────────────────────────
 // Compact shapes the rest of the system (MCP, AI context, UI) consumes instead of
@@ -132,3 +128,28 @@ export const RagSearchResultSchema = z.object({
   metadata: RagChunkMetadataSchema,
 });
 export type RagSearchResult = z.infer<typeof RagSearchResultSchema>;
+
+export const RagSearchRequestSchema = z.object({
+  query: z.string().min(1),
+  topK: z.number().int().min(1).max(20).optional(),
+});
+export type RagSearchRequest = z.infer<typeof RagSearchRequestSchema>;
+
+export const RagIngestRequestSchema = z.object({
+  documents: z.array(RagDocumentSchema).min(1).max(100),
+});
+export type RagIngestRequest = z.infer<typeof RagIngestRequestSchema>;
+
+// ── Chat turn response (orchestrator output) ─────────────────────────────────
+// Defined here so it can reference Intent and RagSearchResult. patientData is the normalized tool
+// output (shape varies by tool) and is surfaced to the UI as authoritative EHR data (spec §4).
+
+export const ChatResponseSchema = z.object({
+  conversationId: z.string(),
+  reply: z.string(),
+  intent: IntentSchema.optional(),
+  toolUsed: z.object({ name: z.string(), ok: z.boolean() }).optional(),
+  patientData: z.unknown().optional(),
+  citations: z.array(RagSearchResultSchema).optional(),
+});
+export type ChatResponse = z.infer<typeof ChatResponseSchema>;

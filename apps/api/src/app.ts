@@ -11,14 +11,29 @@ import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.js';
 import { createToolRegistry } from './mcp/tools/index.js';
 import { createMcpHttpHandler } from './mcp/mcp-server.js';
+import { createChatRouter } from './routes/chat.js';
+import { createRagRouter } from './routes/rag.js';
+import type { Orchestrator } from './ai/orchestrator.js';
+import type { RagService } from './rag/rag-service.js';
+import { getOrchestrator } from './ai/create-orchestrator.js';
+import { getRagService } from './rag/create-rag-service.js';
+
+export interface AppDeps {
+  /** Override for tests; defaults to the live, lazily-constructed orchestrator. */
+  resolveOrchestrator?: () => Orchestrator;
+  /** Override for tests; defaults to the live, lazily-constructed RAG service. */
+  resolveRag?: () => RagService;
+}
 
 /**
  * Builds the Express app. Express-free business logic lives elsewhere (spec §14/§37); this file
  * only wires transport-level concerns: security headers, CORS, body limits, correlation ids,
  * request logging, rate limiting, routes, and centralized error handling.
  */
-export function createApp(): Express {
+export function createApp(deps: AppDeps = {}): Express {
   const app = express();
+  const resolveOrchestrator = deps.resolveOrchestrator ?? getOrchestrator;
+  const resolveRag = deps.resolveRag ?? getRagService;
 
   app.disable('x-powered-by');
   app.use(helmet());
@@ -44,6 +59,8 @@ export function createApp(): Express {
   );
 
   app.use(API_BASE, healthRouter);
+  app.use(API_BASE, createChatRouter(resolveOrchestrator));
+  app.use(API_BASE, createRagRouter(resolveRag));
 
   // Standardized MCP endpoint — exposes healthcare tools to any MCP client (spec §8).
   // One handler instance so Streamable-HTTP sessions persist across initialize/call/close.
