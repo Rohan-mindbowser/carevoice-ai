@@ -12,13 +12,16 @@
     "test:watch": "vitest",
     "fhir:smoke": "tsx src/fhir/smoke.ts",
     "mcp:smoke": "tsx src/mcp/smoke.ts",
-    "ai:smoke": "tsx src/ai/smoke.ts"
+    "ai:smoke": "tsx src/ai/smoke.ts",
+    "rag:ingest": "tsx src/rag/ingest.ts",
+    "rag:search": "tsx src/rag/search-smoke.ts"
   },
   "dependencies": {
     "@carevoice/schemas": "workspace:*",
     "@carevoice/shared": "workspace:*",
     "@google/genai": "^2.27.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@pinecone-database/pinecone": "^9.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",

@@ -93,3 +93,42 @@ export const IntentSchema = z.object({
   limit: z.number().int().optional(),
 });
 export type Intent = z.infer<typeof IntentSchema>;
+
+// ── RAG (approved knowledge) ─────────────────────────────────────────────────
+// Stable reference content only — never real-time patient data (spec §7). Citations are preserved
+// via chunk metadata so answers can point back to the source document (spec §17).
+
+export const RagSourceTypeSchema = z.enum([
+  'policy',
+  'guideline',
+  'reference',
+  'documentation',
+  'terminology',
+  'other',
+]);
+export type RagSourceType = z.infer<typeof RagSourceTypeSchema>;
+
+export const RagDocumentSchema = z.object({
+  documentId: z.string().min(1),
+  documentName: z.string().min(1),
+  sourceType: RagSourceTypeSchema,
+  text: z.string().min(1),
+});
+export type RagDocument = z.infer<typeof RagDocumentSchema>;
+
+export const RagChunkMetadataSchema = z.object({
+  documentId: z.string(),
+  documentName: z.string(),
+  chunkIndex: z.number().int(),
+  sourceType: RagSourceTypeSchema,
+  section: z.string().optional(),
+  page: z.number().int().optional(),
+});
+export type RagChunkMetadata = z.infer<typeof RagChunkMetadataSchema>;
+
+export const RagSearchResultSchema = z.object({
+  text: z.string(),
+  score: z.number(),
+  metadata: RagChunkMetadataSchema,
+});
+export type RagSearchResult = z.infer<typeof RagSearchResultSchema>;

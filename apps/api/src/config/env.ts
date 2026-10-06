@@ -45,9 +45,7 @@ const optionalUrl = () => z.preprocess(blankToUndefined, z.url().optional());
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
-    .default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
 
   FHIR_SOURCE: z.enum(['cerner']).default('cerner'),
@@ -58,6 +56,9 @@ const EnvSchema = z.object({
 
   PINECONE_API_KEY: optionalString(),
   PINECONE_INDEX: optionalString(),
+  // Embedding model + dimension for RAG. The dimension MUST match the Pinecone index's dimension.
+  EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
+  EMBEDDING_DIM: z.coerce.number().int().positive().default(1024),
 
   // Defaults to the open sandbox; override with a secure endpoint + the OAuth vars below (Phase 12).
   CERNER_BASE_URL: z.preprocess(blankToUndefined, z.url().default(CERNER_OPEN_SANDBOX_URL)),
