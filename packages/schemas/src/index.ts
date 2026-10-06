@@ -31,3 +31,43 @@ export const ChatResponseSchema = z.object({
   reply: z.string(),
 });
 export type ChatResponse = z.infer<typeof ChatResponseSchema>;
+
+// ── Normalized FHIR domain models ────────────────────────────────────────────
+// Compact shapes the rest of the system (MCP, AI context, UI) consumes instead of
+// raw FHIR JSON (spec §12). Lower tokens, less vendor coupling, easier to test.
+
+export const PatientSchema = z.object({
+  id: z.string(),
+  /** Display name — PHI. Safe to show to an authorized clinician; never log it. */
+  name: z.string(),
+  gender: z.string().optional(),
+  birthDate: z.string().optional(),
+  /** Medical record number, when present on the FHIR resource. */
+  mrn: z.string().optional(),
+});
+export type Patient = z.infer<typeof PatientSchema>;
+
+export const LabResultSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** Numeric result value when the observation is a quantity. */
+  value: z.number().optional(),
+  /** Non-numeric result (e.g. "POSITIVE") when there is no quantity. */
+  valueText: z.string().optional(),
+  unit: z.string().optional(),
+  referenceRange: z.string().optional(),
+  status: z.string(),
+  interpretation: z.string().optional(),
+  effectiveDate: z.string().optional(),
+});
+export type LabResult = z.infer<typeof LabResultSchema>;
+
+export const DiagnosticReportSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.string(),
+  category: z.string().optional(),
+  effectiveDate: z.string().optional(),
+  conclusion: z.string().optional(),
+});
+export type DiagnosticReportSummary = z.infer<typeof DiagnosticReportSummarySchema>;

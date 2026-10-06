@@ -4,11 +4,21 @@ import { z } from 'zod';
 // Load .env (if present) before reading process.env. Missing file is fine — defaults apply.
 loadDotenv();
 
+/** Cerner's public, unauthenticated R4 sandbox tenant — works with zero credentials. */
+export const CERNER_OPEN_SANDBOX_URL =
+  'https://fhir-open.cerner.com/r4/ec2458f2-1e24-41c8-b71b-0e701af7583d';
+
+/** Treat an unset-or-blank env var as "not provided" so a `FOO=` line in .env doesn't fail URL validation. */
+const blankToUndefined = (value: unknown): unknown =>
+  typeof value === 'string' && value.trim() === '' ? undefined : value;
+const optionalString = () => z.preprocess(blankToUndefined, z.string().optional());
+const optionalUrl = () => z.preprocess(blankToUndefined, z.url().optional());
+
 /**
- * Environment schema (spec §32). Runtime basics are required-with-defaults so the API boots
- * out of the box. Integration credentials (Gemini/Pinecone/Cerner/OAuth) are optional here and
- * are enforced in the phases that consume them. Validation runs once, at import time, and the
- * process fails fast on malformed config.
+ * Environment schema (spec §32). Runtime basics are required-with-defaults so the API boots out of
+ * the box. The FHIR backend defaults to Cerner's open sandbox, so clinical reads work with no
+ * credentials. Integration secrets stay optional here and are enforced in the phases that use them.
+ * Validation runs once at import time; the process fails fast on malformed config.
  */
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -18,22 +28,23 @@ const EnvSchema = z.object({
     .default('info'),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
 
-  FHIR_SOURCE: z.enum(['mock', 'cerner']).default('mock'),
+  FHIR_SOURCE: z.enum(['cerner']).default('cerner'),
   FHIR_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
-  GOOGLE_GENAI_API_KEY: z.string().optional(),
+  GOOGLE_GENAI_API_KEY: optionalString(),
 
-  PINECONE_API_KEY: z.string().optional(),
-  PINECONE_INDEX: z.string().optional(),
+  PINECONE_API_KEY: optionalString(),
+  PINECONE_INDEX: optionalString(),
 
-  CERNER_BASE_URL: z.url().optional(),
-  CERNER_CLIENT_ID: z.string().optional(),
-  CERNER_CLIENT_SECRET: z.string().optional(),
-  CERNER_SCOPE: z.string().optional(),
+  // Defaults to the open sandbox; override with a secure endpoint + the OAuth vars below (Phase 12).
+  CERNER_BASE_URL: z.preprocess(blankToUndefined, z.url().default(CERNER_OPEN_SANDBOX_URL)),
+  CERNER_CLIENT_ID: optionalString(),
+  CERNER_CLIENT_SECRET: optionalString(),
+  CERNER_SCOPE: optionalString(),
 
-  OAUTH_ISSUER: z.string().optional(),
-  OAUTH_AUDIENCE: z.string().optional(),
-  OAUTH_JWKS_URI: z.url().optional(),
+  OAUTH_ISSUER: optionalString(),
+  OAUTH_AUDIENCE: optionalString(),
+  OAUTH_JWKS_URI: optionalUrl(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

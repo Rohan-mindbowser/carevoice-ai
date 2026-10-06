@@ -9,6 +9,8 @@ import { logger } from './observability/logger.js';
 import { requestId } from './middleware/request-id.js';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js';
 import { healthRouter } from './routes/health.js';
+import { createToolRegistry } from './mcp/tools/index.js';
+import { createMcpHttpHandler } from './mcp/mcp-server.js';
 
 /**
  * Builds the Express app. Express-free business logic lives elsewhere (spec §14/§37); this file
@@ -42,6 +44,13 @@ export function createApp(): Express {
   );
 
   app.use(API_BASE, healthRouter);
+
+  // Standardized MCP endpoint — exposes healthcare tools to any MCP client (spec §8).
+  // One handler instance so Streamable-HTTP sessions persist across initialize/call/close.
+  const mcpHandler = createMcpHttpHandler(createToolRegistry());
+  app.post('/mcp', mcpHandler);
+  app.get('/mcp', mcpHandler);
+  app.delete('/mcp', mcpHandler);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
