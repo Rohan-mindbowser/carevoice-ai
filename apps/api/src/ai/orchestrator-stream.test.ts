@@ -50,4 +50,17 @@ describe('Orchestrator.streamTurn', () => {
     expect(events.some((e) => e.type === 'token')).toBe(true);
     expect(events.at(-1)?.type).toBe('done');
   });
+
+  it('emits an error event (not a token or done) when the LLM is unavailable', async () => {
+    const llm = new FakeLlmClient({ throwStructured: true });
+    const orchestrator = new Orchestrator({ llm, registry: createToolRegistry(), fhir });
+    const events: ChatStreamEvent[] = [];
+    await orchestrator.streamTurn(
+      { message: 'find patient named john', auth: clinicianAuth(), requestId: 'r1' },
+      (event) => events.push(event),
+    );
+    expect(events.some((e) => e.type === 'error')).toBe(true);
+    expect(events.some((e) => e.type === 'token')).toBe(false);
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
 });

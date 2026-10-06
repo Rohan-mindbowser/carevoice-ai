@@ -151,6 +151,7 @@ export const ChatResponseSchema = z.object({
   toolUsed: z.object({ name: z.string(), ok: z.boolean() }).optional(),
   patientData: z.unknown().optional(),
   citations: z.array(RagSearchResultSchema).optional(),
+  error: z.boolean().optional(),
 });
 export type ChatResponse = z.infer<typeof ChatResponseSchema>;
 

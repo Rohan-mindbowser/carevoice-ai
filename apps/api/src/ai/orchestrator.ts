@@ -41,6 +41,8 @@ export interface OrchestratorResult {
   toolUsed?: { name: string; ok: boolean };
   patientData?: unknown;
   citations?: RagSearchResult[];
+  /** True when the turn failed due to a service error (e.g. rate limit) — the UI offers retry. */
+  error?: boolean;
 }
 
 const CLARIFY_MESSAGE =
@@ -51,6 +53,13 @@ const NEEDS_PATIENT_ID_MESSAGE =
 
 const KNOWLEDGE_UNAVAILABLE_MESSAGE =
   'The approved knowledge base is not available right now.';
+
+const SERVICE_BUSY_MESSAGE =
+  'The AI service is busy right now (its rate limit was reached). Please try again in a moment.';
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error';
+}
 
 /** Deterministic, PHI-free messages for tool failures — never fabricate data (spec §39). */
 function toolErrorMessage(error: ToolError): string {
@@ -83,10 +92,11 @@ function formatKnowledge(results: RagSearchResult[]): string {
 const KNOWLEDGE_MIN_SCORE = 0.4;
 const KNOWLEDGE_TOP_K = 5;
 
-/** How the reply is produced: a fixed deterministic message, or LLM generation from context. */
+/** How the reply is produced: a fixed deterministic message, LLM generation, or a service error. */
 type Generation =
   | { kind: 'static'; text: string }
-  | { kind: 'llm'; input: ClinicalResponseInput };
+  | { kind: 'llm'; input: ClinicalResponseInput }
+  | { kind: 'error'; message: string };
 
 interface Resolution {
   partial: Omit<OrchestratorResult, 'reply'>;
@@ -109,25 +119,53 @@ export class Orchestrator {
   /** Non-streaming turn — returns the full result once the reply is generated. */
   async handleTurn(input: OrchestratorInput): Promise<OrchestratorResult> {
     const { partial, generation } = await this.resolve(input, noop);
-    const reply =
-      generation.kind === 'static'
-        ? generation.text
-        : await generateClinicalResponse(this.deps.llm, generation.input);
-    return { ...partial, reply };
+    if (generation.kind === 'error') {
+      return { ...partial, reply: generation.message, error: true };
+    }
+    if (generation.kind === 'static') {
+      return { ...partial, reply: generation.text };
+    }
+    try {
+      const reply = await generateClinicalResponse(this.deps.llm, generation.input);
+      return { ...partial, reply };
+    } catch (error) {
+      logger.warn(
+        { event: 'generation_failed', requestId: input.requestId, err: errorMessage(error) },
+        'orchestrator.generation_failed',
+      );
+      return { ...partial, reply: SERVICE_BUSY_MESSAGE, error: true };
+    }
   }
 
   /** Streaming turn — emits structured events then streams the reply tokens (spec §9). */
   async streamTurn(input: OrchestratorInput, emit: (event: ChatStreamEvent) => void): Promise<void> {
     const { partial, generation } = await this.resolve(input, emit);
 
+    if (generation.kind === 'error') {
+      emit({ type: 'error', message: generation.message });
+      return;
+    }
+
     if (generation.kind === 'static') {
       emit({ type: 'token', text: generation.text });
-    } else {
+      emit({ type: 'done', conversationId: partial.conversationId });
+      return;
+    }
+
+    try {
       const { system, prompt } = buildClinicalPrompt(generation.input);
       for await (const delta of this.deps.llm.generateTextStream({ system, prompt, signal: input.signal })) {
-        if (input.signal?.aborted) break;
+        if (input.signal?.aborted) return;
         emit({ type: 'token', text: delta });
       }
+    } catch (error) {
+      if (input.signal?.aborted) return; // client disconnected — nothing to send
+      logger.warn(
+        { event: 'generation_failed', requestId: input.requestId, err: errorMessage(error) },
+        'orchestrator.generation_failed',
+      );
+      emit({ type: 'error', message: SERVICE_BUSY_MESSAGE });
+      return;
     }
     emit({ type: 'done', conversationId: partial.conversationId });
   }
@@ -138,7 +176,22 @@ export class Orchestrator {
     emit: (event: ChatStreamEvent) => void,
   ): Promise<Resolution> {
     const conversationId = input.conversationId ?? randomUUID();
-    const intent = await detectIntent(this.deps.llm, input.message);
+
+    let intent: Intent;
+    try {
+      intent = await detectIntent(this.deps.llm, input.message);
+    } catch (error) {
+      // Model call failed (rate limit / unavailable) — surface as a retryable service error.
+      logger.warn(
+        { event: 'intent_failed', requestId: input.requestId, err: errorMessage(error) },
+        'orchestrator.intent_failed',
+      );
+      return {
+        partial: { conversationId, intent: { intent: 'unknown' } },
+        generation: { kind: 'error', message: SERVICE_BUSY_MESSAGE },
+      };
+    }
+
     logger.info(
       { event: 'turn', requestId: input.requestId, conversationId, intent: intent.intent },
       'orchestrator.turn',

@@ -107,9 +107,10 @@ describe('Orchestrator', () => {
     expect(result.reply).toContain('rephrase');
   });
 
-  it('falls back to a clarify message when intent detection fails', async () => {
+  it('returns a retryable service error when intent detection fails (not a clarify)', async () => {
     const { orchestrator } = buildOrchestrator({ intent: {}, throwIntent: true });
     const result = await orchestrator.handleTurn(turn('???'));
-    expect(result.intent.intent).toBe('unknown');
+    expect(result.error).toBe(true);
+    expect(result.reply.toLowerCase()).toContain('busy');
   });
 });

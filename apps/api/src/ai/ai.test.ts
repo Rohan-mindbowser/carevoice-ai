@@ -12,14 +12,14 @@ describe('detectIntent', () => {
     expect(intent).toEqual({ intent: 'latest_labs', patientId: '12345' });
   });
 
-  it('falls back to unknown when the LLM fails (safe failure)', async () => {
+  it('throws when the LLM call fails (surfaced as a service error upstream)', async () => {
     const llm = new FakeLlmClient({ throwStructured: true });
-    expect(await detectIntent(llm, 'gibberish')).toEqual({ intent: 'unknown' });
+    await expect(detectIntent(llm, 'gibberish')).rejects.toThrow();
   });
 
-  it('falls back to unknown when the LLM returns schema-invalid output', async () => {
+  it('throws when the LLM returns schema-invalid output', async () => {
     const llm = new FakeLlmClient({ structured: { intent: 'not_a_real_intent' } });
-    expect(await detectIntent(llm, 'x')).toEqual({ intent: 'unknown' });
+    await expect(detectIntent(llm, 'x')).rejects.toThrow();
   });
 });
 

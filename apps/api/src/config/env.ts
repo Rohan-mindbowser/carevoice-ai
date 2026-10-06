@@ -49,7 +49,7 @@ const EnvSchema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
 
   FHIR_SOURCE: z.enum(['cerner']).default('cerner'),
-  FHIR_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+  FHIR_TIMEOUT_MS: z.coerce.number().int().positive().default(50000),
 
   GOOGLE_GENAI_API_KEY: optionalString(),
   GEMINI_MODEL: z.string().default('gemini-3.8-flash'),
